@@ -1,0 +1,6 @@
+{
+  "name": "Spartan Reader AI",
+  "description": "A high-intensity English reading training app that forces 'English brain' processing by preventing regression (re-reading). Uses Gemini to chunk text and controls display speed based on WPM.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
