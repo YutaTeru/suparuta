@@ -1,22 +1,20 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Chunk, WPM, AppState } from "./types";
-import { parseTextToChunks } from "./services/geminiService";
 import { parseTextLocal } from "./services/localParser";
 import { ReaderCanvas } from "./components/ReaderCanvas";
 import { SpeedSelector } from "./components/SpeedSelector";
 import { Button } from "./components/Button";
 import {
-  BrainCircuit,
   BookOpen,
-  AlertTriangle,
-  Zap,
+  Gauge,
   Cpu,
   Upload,
   History,
   Star,
   Trash2,
   FileText,
-  Check,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 interface SavedItem {
@@ -31,14 +29,18 @@ interface SavedItem {
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>("INPUT");
   const [inputText, setInputText] = useState("");
-  const [wpm, setWpm] = useState<number>(WPM.DIFFICULT_UNIV);
+  const [wpm, setWpm] = useState<number>(WPM.NORMAL);
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Always use local mode, as AI Extension is removed
+  // Collapsible section states for sections other than the top text input
+  const [isSpeedOpen, setIsSpeedOpen] = useState(true);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  // Always use local mode
   const mode = "local";
 
   // History & Favorites from LocalStorage
@@ -104,7 +106,7 @@ ${textToEmbed}`;
       };
 
       const updated = [newItem, ...filtered];
-      return updated.slice(0, 15); // limit to 15 items
+      return updated.slice(0, 15);
     });
   };
 
@@ -176,8 +178,6 @@ ${textToEmbed}`;
     try {
       let result: Chunk[];
 
-      // Use Local Parser (Instant)
-      // Simulate a tiny delay for UX feels
       await new Promise((resolve) => setTimeout(resolve, 500));
       result = parseTextLocal(inputText);
 
@@ -230,14 +230,17 @@ ${textToEmbed}`;
 
         {/* Configuration Section */}
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-          {/* Text Input */}
+          {/* Main Text Input Section (Top Section - Always Fully Displayed) */}
           <div className="space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-2">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label className="text-sm font-bold uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                <BookOpen size={16} className="text-spartan-neon" /> 英文テキスト
+              </label>
+              <div className="flex items-center gap-2.5">
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="text-xs text-gray-400 hover:text-spartan-neon flex items-center gap-1 transition-all"
+                  className="text-xs text-gray-400 hover:text-spartan-neon flex items-center gap-1 transition-all py-1 px-2 bg-gray-800/40 hover:bg-gray-800 border border-gray-800 rounded-lg"
                   title="JSON形式、または通常のテキストファイルをアップロード"
                 >
                   <Upload size={12} /> ファイル選択
@@ -280,7 +283,7 @@ ${textToEmbed}`;
               <textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder=""
+                placeholder="ここに英文を直接貼り付けるか、ファイルを選択 / プロンプトをコピーしてご利用ください..."
                 className="w-full h-48 bg-transparent rounded-xl p-4 text-base text-white placeholder-gray-600 outline-none resize-none font-sans"
                 disabled={isLoading}
               />
@@ -299,10 +302,137 @@ ${textToEmbed}`;
             </div>
           </div>
 
-          {/* Speed Selector */}
-          <div className="space-y-2">
-            <SpeedSelector selectedWpm={wpm} onSelect={setWpm} />
+          {/* Speed Selector (Collapsible Section) */}
+          <div className="border border-gray-800/80 rounded-xl bg-spartan-gray/30 overflow-hidden transition-all">
+            <button
+              type="button"
+              onClick={() => setIsSpeedOpen(!isSpeedOpen)}
+              className="w-full px-4 py-3 bg-spartan-gray/60 hover:bg-spartan-gray/90 flex items-center justify-between text-xs font-bold uppercase tracking-widest text-gray-400 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                <Gauge size={16} className="text-spartan-neon" /> ターゲット表示速度 ({wpm} WPM)
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-white">
+                {isSpeedOpen ? (
+                  <>
+                    <ChevronUp size={16} /> 閉じる
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={16} /> 開く (設定)
+                  </>
+                )}
+              </span>
+            </button>
+            {isSpeedOpen && (
+              <div className="p-4 pt-2 animate-in fade-in duration-200">
+                <SpeedSelector selectedWpm={wpm} onSelect={setWpm} />
+              </div>
+            )}
           </div>
+
+          {/* History & Favorites Section (Collapsible Section) */}
+          {savedItems.length > 0 && (
+            <div className="border border-gray-800/80 rounded-xl bg-spartan-gray/30 overflow-hidden transition-all">
+              <button
+                type="button"
+                onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+                className="w-full px-4 py-3 bg-spartan-gray/60 hover:bg-spartan-gray/90 flex items-center justify-between text-xs font-bold uppercase tracking-widest text-gray-400 transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <History size={16} className="text-spartan-neon" /> 学習履歴とお気に入り ({savedItems.length})
+                </span>
+                <span className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-white">
+                  {isHistoryOpen ? (
+                    <>
+                      <ChevronUp size={16} /> 閉じる
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown size={16} /> 開く
+                    </>
+                  )}
+                </span>
+              </button>
+              {isHistoryOpen && (
+                <div className="p-4 max-h-52 overflow-y-auto space-y-2 pr-1 no-scrollbar animate-in fade-in duration-200">
+                  {savedItems.map((item) => {
+                    let preview = item.text.trim();
+                    if (preview.startsWith("[") || preview.startsWith("{")) {
+                      try {
+                        const parsed = JSON.parse(preview);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                          preview =
+                            typeof parsed[0] === "string"
+                              ? parsed[0]
+                              : parsed[0].en || parsed[0].text || preview;
+                        }
+                      } catch (e) {}
+                    }
+                    if (preview.length > 60) {
+                      preview = preview.substring(0, 60) + "...";
+                    }
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => loadSavedItem(item)}
+                        className="group flex items-center justify-between p-3 bg-spartan-gray/40 hover:bg-spartan-gray border border-gray-800/40 hover:border-gray-700/80 rounded-xl cursor-pointer transition-all text-left duration-200"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="flex-shrink-0">
+                            <FileText
+                              size={16}
+                              className="text-gray-500 group-hover:text-spartan-neon transition-colors"
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-300 group-hover:text-white transition-colors truncate">
+                              {preview || "空のテキスト"}
+                            </p>
+                            <div className="flex items-center gap-2 mt-0.5 text-[10px] text-gray-500 font-mono">
+                              <span>{item.wpm} WPM</span>
+                              <span>•</span>
+                              <span>
+                                {new Date(item.timestamp).toLocaleDateString(
+                                  "ja-JP",
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => toggleFavorite(item.id, e)}
+                            className="p-1.5 rounded-lg text-gray-500 hover:text-yellow-400 hover:bg-gray-800/50 transition-all"
+                            title="お気に入りに登録"
+                          >
+                            <Star
+                              size={14}
+                              fill={item.isFavorite ? "currentColor" : "none"}
+                              className={
+                                item.isFavorite ? "text-yellow-400" : ""
+                              }
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => deleteSavedItem(item.id, e)}
+                            className="p-1.5 rounded-lg text-gray-500 hover:text-spartan-red hover:bg-gray-800/50 transition-all"
+                            title="削除"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Error Message */}
           {error && (
@@ -327,3 +457,4 @@ ${textToEmbed}`;
 };
 
 export default App;
+

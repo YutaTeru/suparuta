@@ -3,7 +3,8 @@ import { Chunk } from '../types';
 import { 
   Play, Pause, RotateCcw, CheckCircle, Languages, 
   Sparkles, ScanEye, Ghost, Zap,
-  Settings2, X, Layers, Gauge, BookOpen, Clock
+  Settings2, X, Layers, Gauge, BookOpen, Clock,
+  Minus, Plus
 } from 'lucide-react';
 import { Button } from './Button';
 import { ProgressBar } from './ProgressBar';
@@ -103,15 +104,15 @@ export const ReaderCanvas: React.FC<ReaderCanvasProps> = ({ chunks, wpm: initial
   useEffect(() => {
     if (isPlaying && frameIndex < frames.length) {
       const currentFrame = frames[frameIndex];
-      // Calculate duration:
+      // Calculate duration based on word count and WPM:
+      const wpmDuration = Math.max(300, (currentFrame.wordCount / dynamicWpm) * 60 * 1000);
       let duration: number;
       if (translationDelay > 0) {
-        // Delay Mode: Keep English displayed for translationDelay seconds, then display translation for exactly 3 seconds
-        duration = (translationDelay * 1000) + 3000;
+        // Delay Mode: Keep English displayed for translationDelay seconds, then display translation for wpmDuration
+        duration = (translationDelay * 1000) + wpmDuration;
       } else {
-        // Normal Mode: (Words / WPM) * 60 * 1000
-        // Enforce a minimum duration of 150ms to prevent unreadable flashes
-        duration = Math.max(150, (currentFrame.wordCount / dynamicWpm) * 60 * 1000);
+        // Normal Mode: WPM-based duration
+        duration = wpmDuration;
       }
       
       timerRef.current = setTimeout(() => {
@@ -467,23 +468,46 @@ export const ReaderCanvas: React.FC<ReaderCanvasProps> = ({ chunks, wpm: initial
 
                 {/* Speed */}
                  <div className="space-y-2">
-                  <div className="flex justify-between text-xs text-gray-400">
+                  <div className="flex justify-between items-center text-xs text-gray-400">
                     <span className="flex items-center gap-1"><Gauge size={14}/> 表示速度 (WPM)</span>
-                    <span className="text-spartan-neon font-bold text-lg">{dynamicWpm}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-spartan-neon font-bold text-lg font-mono">{dynamicWpm}</span>
+                      <span className="text-[10px] text-gray-400">WPM</span>
+                    </div>
                   </div>
-                  <input 
-                    type="range" 
-                    min="60" 
-                    max="600" 
-                    step="10" 
-                    value={dynamicWpm}
-                    onChange={(e) => setDynamicWpm(Number(e.target.value))}
-                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-spartan-neon"
-                  />
-                  <div className="flex justify-between text-[10px] text-gray-600 font-mono uppercase">
-                    <span>ゆっくり</span>
-                    <span>標準</span>
-                    <span>超高速</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDynamicWpm(prev => Math.max(70, prev - 10))}
+                      disabled={dynamicWpm <= 70}
+                      className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white flex items-center justify-center font-bold border border-gray-700 transition-all active:scale-95 shrink-0"
+                      title="10下げる"
+                    >
+                      <Minus size={14} />
+                    </button>
+                    <input 
+                      type="range" 
+                      min="70" 
+                      max="160" 
+                      step="10" 
+                      value={dynamicWpm}
+                      onChange={(e) => setDynamicWpm(Number(e.target.value))}
+                      className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-spartan-neon"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setDynamicWpm(prev => Math.min(160, prev + 10))}
+                      disabled={dynamicWpm >= 160}
+                      className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 text-white flex items-center justify-center font-bold border border-gray-700 transition-all active:scale-95 shrink-0"
+                      title="10上げる"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-gray-500 font-mono">
+                    <span>70 (遅い)</span>
+                    <span>110 (標準)</span>
+                    <span>160 (速い)</span>
                   </div>
                 </div>
              </div>

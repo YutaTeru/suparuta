@@ -5,9 +5,9 @@ export interface Chunk {
 }
 
 export enum WPM {
-  COMMON_TEST = 120,
-  DIFFICULT_UNIV = 150,
-  NATIVE = 180,
+  SLOW = 70,
+  NORMAL = 110,
+  FAST = 160,
 }
 
 export type AppState = 'INPUT' | 'PROCESSING' | 'READING' | 'RESULT';
