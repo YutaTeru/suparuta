@@ -1,460 +1,165 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Chunk, WPM, AppState } from "./types";
-import { parseTextLocal } from "./services/localParser";
-import { ReaderCanvas } from "./components/ReaderCanvas";
-import { SpeedSelector } from "./components/SpeedSelector";
-import { Button } from "./components/Button";
-import {
-  BookOpen,
-  Gauge,
-  Cpu,
-  Upload,
-  History,
-  Star,
-  Trash2,
-  FileText,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
+import { useMemo, useRef, useState } from 'react';
+import { ArrowRight, BookOpen, Check, ChevronDown, Clock, Copy, History, Star, Trash2, Upload } from 'lucide-react';
+import type { Chunk } from './types';
+import { parseTextLocal } from './services/localParser';
+import { buildFrames, formatDuration, frameDuration } from './services/reading';
+import { HISTORY_KEY, readHistory, saveReading, trimHistory, type SavedItem } from './services/history';
+import { ReaderCanvas } from './components/ReaderCanvas';
+import { SpeedSelector } from './components/SpeedSelector';
+import { Button } from './components/Button';
 
-interface SavedItem {
-  id: string;
-  text: string;
-  wpm: number;
-  mode: "ai" | "local";
-  timestamp: number;
-  isFavorite: boolean;
+function loadInitialHistory() {
+  try { return { items: readHistory(localStorage.getItem(HISTORY_KEY)), error: '' }; }
+  catch { return { items: [] as SavedItem[], error: '履歴を読み込めませんでした。既存データを保護するため、この画面では保存を停止しています。' }; }
 }
 
-const App: React.FC = () => {
-  const [appState, setAppState] = useState<AppState>("INPUT");
-  const [inputText, setInputText] = useState("");
-  const [wpm, setWpm] = useState<number>(WPM.NORMAL);
-  const [chunks, setChunks] = useState<Chunk[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
+export default function App() {
+  const [initialHistory] = useState(loadInitialHistory);
+  const [savedItems, setSavedItems] = useState(initialHistory.items);
+  const [storageError, setStorageError] = useState(initialHistory.error);
+  const [inputText, setInputText] = useState('');
+  const [wpm, setWpm] = useState(110);
+  const [chunks, setChunks] = useState<Chunk[] | null>(null);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [fileLoading, setFileLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [ended, setEnded] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
-  // Collapsible section states for sections other than the top text input
-  const [isSpeedOpen, setIsSpeedOpen] = useState(true);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-
-  // Always use local mode
-  const mode = "local";
-
-  // History & Favorites from LocalStorage
-  const [savedItems, setSavedItems] = useState<SavedItem[]>(() => {
+  const preview = useMemo(() => {
     try {
-      const saved = localStorage.getItem("spartan_reader_history");
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+      const parsed = parseTextLocal(inputText);
+      const frames = buildFrames(parsed);
+      return { parsed, words: frames.reduce((sum, frame) => sum + frame.wordCount, 0),
+        duration: frames.reduce((sum, frame) => sum + frameDuration(frame, wpm), 0) };
+    } catch { return null; }
+  }, [inputText, wpm]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    localStorage.setItem("spartan_reader_history", JSON.stringify(savedItems));
-  }, [savedItems]);
-
-  const copyAIPrompt = () => {
-    const textToEmbed =
-      inputText.trim() || "[ここにあなたの英文を貼り付けてください]";
-    const promptText = `以下の英文を、意味の固まり（1〜7単語程度）に分割し、JSON形式の配列で出力してください。余計な説明や\`\`\`jsonなどのマークダウン装飾は一切含めず、純粋なJSON配列データのみを出力してください。
-
-【出力フォーマット】
-[
-  { "en": "意味の固まりの英文", "jp": "その部分の日本語訳（可能であれば直訳に近い形で）", "speaker": null },
-  ...
-]
-
-【分割ルール】
-- 1つの要素（en）は最大7単語までにしてください。
-- 接続詞、前置詞、関係代名詞、カンマやピリオドなどの区切りを意識して、自然な意味の固まりに分割してください。
-- 日本語訳（jp）は、その部分だけの直訳に近い、戻り読みをしない自然な訳にしてください。
-
-【対象の英文】
-${textToEmbed}`;
-
-    navigator.clipboard.writeText(promptText);
-    setCopiedPrompt(true);
-    setTimeout(() => setCopiedPrompt(false), 2000);
-  };
-
-  const saveToHistory = (
-    text: string,
-    currentWpm: number,
-    currentMode: "ai" | "local",
-  ) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-
-    setSavedItems((prev) => {
-      const existing = prev.find((item) => item.text.trim() === trimmed);
-      const isFavorite = existing ? existing.isFavorite : false;
-      const filtered = prev.filter((item) => item.text.trim() !== trimmed);
-
-      const newItem: SavedItem = {
-        id: existing?.id || Math.random().toString(36).substring(2, 9),
-        text: trimmed,
-        wpm: currentWpm,
-        mode: currentMode,
-        timestamp: Date.now(),
-        isFavorite,
-      };
-
-      const updated = [newItem, ...filtered];
-      return updated.slice(0, 15);
-    });
-  };
-
-  const toggleFavorite = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSavedItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, isFavorite: !item.isFavorite } : item,
-      ),
-    );
-  };
-
-  const deleteSavedItem = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSavedItems((prev) => prev.filter((item) => item.id !== id));
-  };
-
-  const loadSavedItem = (item: SavedItem) => {
-    setInputText(item.text);
-    setWpm(item.wpm);
-    setError(null);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragging(false);
-  };
-
-  const handleFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result;
-      if (typeof content === "string") {
-        setInputText(content);
-        setError(null);
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFile(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleFile(e.target.files[0]);
-    }
-  };
-
-  const handleProcess = async () => {
-    if (!inputText.trim()) {
-      setError("英文を入力してください。");
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-    setAppState("PROCESSING");
-
-    try {
-      let result: Chunk[];
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      result = parseTextLocal(inputText);
-
-      saveToHistory(inputText, wpm, mode);
-      setChunks(result);
-      setAppState("READING");
-    } catch (err) {
-      console.error(err);
-      setError(
-        "処理に失敗しました。入力データ（JSONやテキスト）に誤りがないかご確認ください。",
-      );
-      setAppState("INPUT");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleReset = () => {
-    setAppState("INPUT");
-    setInputText("");
-    setChunks([]);
-  };
-
-  if (appState === "READING" || appState === "RESULT") {
-    return (
-      <ReaderCanvas
-        chunks={chunks}
-        wpm={wpm}
-        onFinish={() => setAppState("RESULT")}
-        onReset={handleReset}
-      />
-    );
+  function updateHistory(next: SavedItem[]) {
+    setSavedItems(next);
+    if (initialHistory.error) return;
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); setStorageError(''); }
+    catch { setStorageError('履歴を保存できませんでした。端末の空き容量やブラウザの保存設定をご確認ください。'); }
   }
 
-  return (
-    <div className="min-h-screen bg-spartan-black text-white p-6 flex flex-col items-center justify-center font-sans">
-      <div className="max-w-xl w-full space-y-8">
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tighter text-white">
-            SPARTAN{" "}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-spartan-neon to-purple-500">
-              READER
-            </span>
-          </h1>
-          <p className="text-gray-400 font-medium">
-            戻り読みを撲滅し、英語脳を鍛える。
-          </p>
-        </div>
+  function start() {
+    try {
+      const result = parseTextLocal(inputText);
+      if (!result.length) throw new Error('読む英文を貼り付けてください。');
+      updateHistory(saveReading(savedItems, inputText, wpm));
+      setError(''); setEnded(false); setChunks(result);
+    } catch (err) { setError(err instanceof Error ? err.message : '英文を読み込めませんでした。'); }
+  }
 
-        {/* Configuration Section */}
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-          {/* Main Text Input Section (Top Section - Always Fully Displayed) */}
-          <div className="space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <label className="text-sm font-bold uppercase tracking-widest text-gray-400 flex items-center gap-2">
-                <BookOpen size={16} className="text-spartan-neon" /> 英文テキスト
-              </label>
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-xs text-gray-400 hover:text-spartan-neon flex items-center gap-1 transition-all py-1 px-2 bg-gray-800/40 hover:bg-gray-800 border border-gray-800 rounded-lg"
-                  title="JSON形式、または通常のテキストファイルをアップロード"
-                >
-                  <Upload size={12} /> ファイル選択
-                </button>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept=".json,.txt"
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={copyAIPrompt}
-                  className={`text-xs px-3 py-1.5 rounded-lg border font-bold flex items-center gap-1.5 transition-all duration-300 ${
-                    copiedPrompt
-                      ? "bg-green-500/20 border-green-400/50 text-green-400 shadow-[0_0_8px_rgba(74,222,128,0.2)]"
-                      : "bg-purple-500/10 border-purple-500/30 hover:border-purple-400 text-purple-400 hover:text-white hover:bg-purple-500/20 shadow-sm"
-                  }`}
-                >
-                  <Cpu
-                    size={12}
-                    className={copiedPrompt ? "animate-bounce" : ""}
-                  />
-                  {copiedPrompt ? "コピー完了！ ✓" : "プロンプトコピー"}
-                </button>
-              </div>
-            </div>
+  async function readFile(file?: File) {
+    if (!file) return;
+    if (!/\.(txt|json)$/i.test(file.name)) { setError('テキスト（.txt）またはJSON（.json）ファイルを選んでください。'); return; }
+    if (file.size > 2 * 1024 * 1024) { setError('ファイルは2MB以内で選んでください。'); return; }
+    setFileLoading(true);
+    try { setInputText(await file.text()); setError(''); setEnded(false); }
+    catch { setError('ファイルを読み込めませんでした。もう一度選んでください。'); }
+    finally { setFileLoading(false); if (fileInput.current) fileInput.current.value = ''; }
+  }
 
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={`relative rounded-xl border-2 transition-all duration-300 ${
-                isDragging
-                  ? "border-spartan-neon bg-spartan-neon/5 scale-[1.01]"
-                  : "border-transparent bg-spartan-gray"
-              }`}
-            >
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="ここに英文を直接貼り付けるか、ファイルを選択 / プロンプトをコピーしてご利用ください..."
-                className="w-full h-48 bg-transparent rounded-xl p-4 text-base text-white placeholder-gray-600 outline-none resize-none font-sans"
-                disabled={isLoading}
-              />
+  async function copyPrompt() {
+    const prompt = `以下の英文を意味のかたまり（1〜7単語程度）に分割し、日本語訳を付けてください。
+純粋なJSON配列のみ出力し、説明やマークダウン装飾は付けないでください。
+形式: [{"en":"英文のかたまり","jp":"その部分の日本語訳","speaker":null}]
+英文の単語を省略・変更せず、元の順序を保ってください。
+熟語のまとまり、接続詞、前置詞、関係代名詞、句読点を考慮し、機械的に途中で切らず自然に区切ってください。
+日本語訳は各部分に対応する、前から理解できる訳にしてください。
 
-              {isDragging && (
-                <div className="absolute inset-0 bg-spartan-black/85 flex flex-col items-center justify-center rounded-xl border border-dashed border-spartan-neon pointer-events-none animate-in fade-in duration-200">
-                  <Upload
-                    className="text-spartan-neon mb-2 animate-bounce"
-                    size={32}
-                  />
-                  <p className="text-spartan-neon font-bold text-sm">
-                    ここにドロップしてJSON/テキストを読み込む
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
+【対象の英文】
+${inputText.trim() || '[ここに英文を貼り付けてください]'}`;
+    try { await navigator.clipboard.writeText(prompt); setCopied(true); }
+    catch { setCopied(false); setError('コピーできませんでした。ブラウザのクリップボード権限をご確認ください。'); }
+  }
 
-          {/* Speed Selector (Collapsible Section) */}
-          <div className="border border-gray-800/80 rounded-xl bg-spartan-gray/30 overflow-hidden transition-all">
-            <button
-              type="button"
-              onClick={() => setIsSpeedOpen(!isSpeedOpen)}
-              className="w-full px-4 py-3 bg-spartan-gray/60 hover:bg-spartan-gray/90 flex items-center justify-between text-xs font-bold uppercase tracking-widest text-gray-400 transition-colors"
-            >
-              <span className="flex items-center gap-2">
-                <Gauge size={16} className="text-spartan-neon" /> ターゲット表示速度 ({wpm} WPM)
-              </span>
-              <span className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-white">
-                {isSpeedOpen ? (
-                  <>
-                    <ChevronUp size={16} /> 閉じる
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown size={16} /> 開く (設定)
-                  </>
-                )}
-              </span>
-            </button>
-            {isSpeedOpen && (
-              <div className="p-4 pt-2 animate-in fade-in duration-200">
-                <SpeedSelector selectedWpm={wpm} onSelect={setWpm} />
-              </div>
-            )}
-          </div>
+  function loadItem(item: SavedItem) {
+    setInputText(item.text); setWpm(item.wpm); setEnded(false); setError('');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
 
-          {/* History & Favorites Section (Collapsible Section) */}
-          {savedItems.length > 0 && (
-            <div className="border border-gray-800/80 rounded-xl bg-spartan-gray/30 overflow-hidden transition-all">
-              <button
-                type="button"
-                onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-                className="w-full px-4 py-3 bg-spartan-gray/60 hover:bg-spartan-gray/90 flex items-center justify-between text-xs font-bold uppercase tracking-widest text-gray-400 transition-colors"
-              >
-                <span className="flex items-center gap-2">
-                  <History size={16} className="text-spartan-neon" /> 学習履歴とお気に入り ({savedItems.length})
-                </span>
-                <span className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-white">
-                  {isHistoryOpen ? (
-                    <>
-                      <ChevronUp size={16} /> 閉じる
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown size={16} /> 開く
-                    </>
-                  )}
-                </span>
-              </button>
-              {isHistoryOpen && (
-                <div className="p-4 max-h-52 overflow-y-auto space-y-2 pr-1 no-scrollbar animate-in fade-in duration-200">
-                  {savedItems.map((item) => {
-                    let preview = item.text.trim();
-                    if (preview.startsWith("[") || preview.startsWith("{")) {
-                      try {
-                        const parsed = JSON.parse(preview);
-                        if (Array.isArray(parsed) && parsed.length > 0) {
-                          preview =
-                            typeof parsed[0] === "string"
-                              ? parsed[0]
-                              : parsed[0].en || parsed[0].text || preview;
-                        }
-                      } catch (e) {}
-                    }
-                    if (preview.length > 60) {
-                      preview = preview.substring(0, 60) + "...";
-                    }
+  if (chunks) return <ReaderCanvas chunks={chunks} wpm={wpm}
+    onBack={currentWpm => { setWpm(currentWpm); setChunks(null); }}
+    onExit={currentWpm => { setWpm(currentWpm); setChunks(null); setInputText(''); setEnded(true); }} />;
 
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => loadSavedItem(item)}
-                        className="group flex items-center justify-between p-3 bg-spartan-gray/40 hover:bg-spartan-gray border border-gray-800/40 hover:border-gray-700/80 rounded-xl cursor-pointer transition-all text-left duration-200"
-                      >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="flex-shrink-0">
-                            <FileText
-                              size={16}
-                              className="text-gray-500 group-hover:text-spartan-neon transition-colors"
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-gray-300 group-hover:text-white transition-colors truncate">
-                              {preview || "空のテキスト"}
-                            </p>
-                            <div className="flex items-center gap-2 mt-0.5 text-[10px] text-gray-500 font-mono">
-                              <span>{item.wpm} WPM</span>
-                              <span>•</span>
-                              <span>
-                                {new Date(item.timestamp).toLocaleDateString(
-                                  "ja-JP",
-                                )}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(e) => toggleFavorite(item.id, e)}
-                            className="p-1.5 rounded-lg text-gray-500 hover:text-yellow-400 hover:bg-gray-800/50 transition-all"
-                            title="お気に入りに登録"
-                          >
-                            <Star
-                              size={14}
-                              fill={item.isFavorite ? "currentColor" : "none"}
-                              className={
-                                item.isFavorite ? "text-yellow-400" : ""
-                              }
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => deleteSavedItem(item.id, e)}
-                            className="p-1.5 rounded-lg text-gray-500 hover:text-spartan-red hover:bg-gray-800/50 transition-all"
-                            title="削除"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Error Message */}
-          {error && (
-            <div className="bg-spartan-red/10 border border-spartan-red/50 text-spartan-red p-4 rounded-lg text-sm text-center">
-              {error}
-            </div>
-          )}
-
-          {/* Action Button */}
-          <Button
-            variant="neon"
-            onClick={handleProcess}
-            isLoading={isLoading}
-            disabled={!inputText.trim()}
-          >
-            {isLoading ? "処理中..." : "チャンク読みを開始"}
-          </Button>
-        </div>
+  const visibleHistory = favoritesOnly ? savedItems.filter(item => item.isFavorite) : savedItems;
+  return <main className="mx-auto min-h-screen w-full max-w-xl px-5 pb-10 pt-10 sm:px-6 sm:pt-14">
+    <header className="mb-9">
+      <div className="mb-7 flex items-center gap-2 text-sm font-extrabold tracking-wider">
+        <span className="h-4 w-1 bg-spartan-red" aria-hidden="true" /> SPARTAN <span className="text-zinc-400">READER</span>
       </div>
-    </div>
-  );
-};
+      <h1 className="text-[clamp(1.8rem,6vw,2.6rem)] font-extrabold leading-snug tracking-tight">英語は、前から読んで<br /><span className="text-spartan-neon">終わらせる。</span></h1>
+      <p className="mt-4 text-sm leading-7 text-zinc-400">英文を貼る。かたまりごとに読む。読み切る。</p>
+    </header>
 
-export default App;
+    {ended && <div role="status" className="mb-6 rounded-xl border border-zinc-700 bg-spartan-gray p-4 text-sm leading-6"><span className="font-bold text-white">今日は、ここまで。</span><br /><span className="text-zinc-300">読んだ英文は履歴から開けます。</span></div>}
+    <section aria-label="読む英文" className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor="reading-text" className="flex items-center gap-2 text-sm font-bold"><BookOpen size={17} className="text-zinc-400" />読む英文</label>
+        <button className="quiet-button" onClick={() => fileInput.current?.click()} disabled={fileLoading}><Upload size={15} />ファイルから</button>
+        <input type="file" ref={fileInput} accept=".txt,.json" className="hidden" onChange={e => void readFile(e.target.files?.[0])} />
+      </div>
+      <div onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); void readFile(e.dataTransfer.files[0]); }}
+        className={`rounded-xl border transition-colors ${dragging ? 'border-spartan-neon bg-spartan-red/10' : 'border-zinc-700 bg-spartan-gray focus-within:border-zinc-400'}`}>
+        <textarea id="reading-text" value={inputText} disabled={fileLoading} spellCheck={false}
+          aria-describedby="input-help" aria-invalid={Boolean(error)} onChange={e => { setInputText(e.target.value); setError(''); setCopied(false); }}
+          placeholder="ここに読みたい英文を貼り付ける"
+          className="block min-h-40 w-full resize-y rounded-xl bg-transparent p-4 text-base leading-7 text-white placeholder:text-zinc-500 focus-visible:outline-offset-0" />
+      </div>
+      <p id="input-help" className="text-xs leading-6 text-zinc-400">英文だけですぐ読めます。日本語訳は、訳付き教材を読み込むと表示できます。</p>
+      <details className="rounded-xl border border-zinc-800">
+        <summary className="cursor-pointer px-4 py-3 text-sm text-zinc-300">速度：{wpm === 110 ? '標準 ' : ''}<span className="font-mono">{wpm} WPM</span><span className="ml-2 text-zinc-400">変更</span></summary>
+        <div className="border-t border-zinc-800 p-4"><SpeedSelector selectedWpm={wpm} onSelect={setWpm} /></div>
+      </details>
 
+      {inputText.trim() && preview && preview.words > 0 && <div className="flex flex-wrap items-center justify-between gap-2 py-1 text-sm text-zinc-300">
+        <span className="font-mono">{preview.words} words</span><span className="flex items-center gap-1.5"><Clock size={15} />読了まで 約{formatDuration(preview.duration)}</span>
+      </div>}
+      {error && <p role="alert" className="rounded-lg border border-spartan-neon/40 bg-spartan-red/10 p-3 text-sm leading-6 text-rose-200">{error}</p>}
+      <Button disabled={!inputText.trim() || fileLoading} onClick={start}>読み始める <ArrowRight size={19} /></Button>
+      <p className="text-center text-xs text-zinc-400">2秒後にスタート。途中で止めても大丈夫。</p>
+    </section>
+
+    <details className="mt-7 border-t border-zinc-800 pt-3">
+      <summary className="cursor-pointer py-3 text-sm text-zinc-400">日本語訳付きで読むには</summary>
+      <div className="space-y-3 pb-4 text-sm leading-7 text-zinc-300">
+        <p>① 英文を貼って、下のボタンで依頼文をコピー。<br />② ChatGPTなどのAIに貼り付ける。<br />③ 返ってきた教材データを、この入力欄に貼り付ける。</p>
+        <button className="quiet-button border border-zinc-700" onClick={() => void copyPrompt()}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'コピーしました' : '訳付き教材を作る依頼文をコピー'}</button>
+        <p role="status" className="text-xs text-zinc-400">{copied ? 'AIに貼り付けて、教材データを作成してください。' : 'このアプリ内では自動翻訳しません。AIの訳や区切りは確認して使ってください。'}</p>
+      </div>
+    </details>
+
+    {savedItems.length > 0 && <section className="mt-3 border-t border-zinc-800 pt-2">
+      <button className="quiet-button w-full justify-between px-0" aria-expanded={showHistory} aria-controls="reading-history" onClick={() => setShowHistory(!showHistory)}>
+        <span className="flex items-center gap-2"><History size={16} />履歴・お気に入り <span className="text-zinc-500">{savedItems.length}</span></span><ChevronDown size={16} className={showHistory ? 'rotate-180' : ''} />
+      </button>
+      {showHistory && <div id="reading-history" className="mt-3 space-y-3">
+        <div className="flex gap-2"><button className="choice px-4" aria-pressed={!favoritesOnly} onClick={() => setFavoritesOnly(false)}>すべて</button><button className="choice px-4" aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly(true)}>お気に入り</button></div>
+        <p className="text-xs text-zinc-400">このブラウザに保存。通常の履歴は15件、お気に入りは件数制限なし。</p>
+        {visibleHistory.length === 0 && <p className="py-3 text-sm text-zinc-400">星を押すと、ここに残せます。</p>}
+        {visibleHistory.map(item => {
+          let title = item.text;
+          try { title = parseTextLocal(item.text).slice(0, 2).map(chunk => chunk.en).join(' '); } catch { /* Preserve access to old, invalid entries for editing. */ }
+          return <div key={item.id} className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-spartan-gray p-2">
+            <button className="min-w-0 flex-1 rounded-lg p-2 text-left hover:bg-white/5" onClick={() => loadItem(item)}>
+              <span className="block truncate text-sm font-medium">{title}</span>
+              <span className="mt-1 block text-xs text-zinc-400">{item.wpm} WPM · {new Date(item.timestamp).toLocaleDateString('ja-JP')}</span>
+            </button>
+            <button className="quiet-button shrink-0 px-3" aria-label={item.isFavorite ? 'お気に入りを解除' : 'お気に入りに登録'} aria-pressed={item.isFavorite}
+              onClick={() => updateHistory(trimHistory(savedItems.map(saved => saved.id === item.id ? { ...saved, isFavorite: !saved.isFavorite } : saved)))}>
+              <Star size={18} className={item.isFavorite ? 'text-spartan-neon' : ''} fill={item.isFavorite ? 'currentColor' : 'none'} /></button>
+            <button className="quiet-button shrink-0 px-3" aria-label="この履歴を削除" onClick={() => updateHistory(savedItems.filter(saved => saved.id !== item.id))}><Trash2 size={17} /></button>
+          </div>;
+        })}
+      </div>}
+    </section>}
+    {storageError && <p role="alert" className="mt-4 text-sm leading-6 text-rose-200">{storageError}</p>}
+    <footer className="mt-9 text-xs text-zinc-500">英語に使う時間を、前に進む時間に。</footer>
+  </main>;
+}
