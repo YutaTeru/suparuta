@@ -1,4 +1,4 @@
-import { Chunk } from "../types";
+import type { Chunk } from "../types";
 
 /**
  * Parses English text locally.
@@ -8,12 +8,17 @@ import { Chunk } from "../types";
  * 3. Intelligent rule-based natural phrase chunking (max 7 words per chunk, splitting at punctuation, conjunctions, prepositions, etc.)
  */
 export const parseTextLocal = (text: string): Chunk[] => {
-  const trimmed = text.trim();
+  const trimmed = text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1').trim();
   if (!trimmed) return [];
 
   // --- 1. Attempt JSON Parsing (JSON Array of strings or objects) ---
-  try {
-    const parsed = JSON.parse(trimmed);
+  if (/^[\[{]/.test(trimmed)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error('教材データのJSONが途中で切れているか、形式が正しくありません。配列全体を貼り付けてください。');
+    }
     if (Array.isArray(parsed) && parsed.length > 0) {
       const chunks: Chunk[] = [];
       for (const item of parsed) {
@@ -25,14 +30,19 @@ export const parseTextLocal = (text: string): Chunk[] => {
             jp: typeof item.jp === 'string' ? item.jp.trim() : "",
             speaker: typeof item.speaker === 'string' ? item.speaker.trim() : null
           });
+        } else {
+          throw new Error('教材の各項目に、空でない英文（en）が必要です。');
+        }
+        if (item && typeof item === 'object' &&
+          ((item.jp != null && typeof item.jp !== 'string') || (item.speaker != null && typeof item.speaker !== 'string'))) {
+          throw new Error('日本語訳（jp）と話者（speaker）は文字列で入力してください。');
         }
       }
       if (chunks.length > 0) {
         return chunks;
       }
     }
-  } catch (e) {
-    // Not a valid JSON, fallback to other parsing methods
+    throw new Error('教材データは、英文を1件以上含むJSON配列で入力してください。');
   }
 
   // --- 2. Attempt Newline-separated chunks if there are multiple lines ---
@@ -68,7 +78,8 @@ export const parseTextLocal = (text: string): Chunk[] => {
   for (let i = 0; i < words.length; i++) {
     const word = words[i];
     const cleanWord = word.toLowerCase().replace(/[^a-z]/g, '');
-    const hasPunctuation = punctuationRegex.test(word);
+    const isAbbreviation = /^(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St)\.$/i.test(word) || /^(?:[A-Za-z]\.){2,}$/.test(word);
+    const hasPunctuation = punctuationRegex.test(word) && !isAbbreviation;
 
     // Decision: should we start a new chunk before this word?
     const isSplitMarker = 
